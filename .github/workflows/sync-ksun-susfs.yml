@@ -1,0 +1,91 @@
+name: Daily KernelSU-Next + SuSFS Sync
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-and-patch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout automation repo
+        uses: actions/checkout@v4
+
+      - name: Checkout kernel repo
+        uses: actions/checkout@v4
+        with:
+          repository: Fleur-Project/android_kernel_xiaomi_sm7435
+          ref: '17'
+          fetch-depth: 0
+          token: ${{ secrets.KERNEL_TOKEN }}
+          path: kernel
+
+      - name: Configure Git
+        working-directory: kernel
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check for upstream updates
+        id: check
+        working-directory: kernel
+        run: |
+          git fetch origin 17
+          git fetch origin ksun-susfs 2>/dev/null || true
+
+          UPSTREAM_SHA=$(git rev-parse origin/17)
+          CURRENT_BASE=$(git merge-base origin/ksun-susfs origin/17 2>/dev/null || echo "none")
+
+          KSUN_LATEST=$(git ls-remote https://github.com/pershoot/KernelSU-Next refs/heads/dev-susfs | awk '{print $1}')
+          KSUN_CURRENT=$(git ls-tree origin/ksun-susfs KernelSU-Next 2>/dev/null | awk '{print $3}' || echo "none")
+
+          if [ "$UPSTREAM_SHA" = "$CURRENT_BASE" ] && [ "$KSUN_LATEST" = "$KSUN_CURRENT" ]; then
+            echo "No upstream updates detected, skipping."
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+          else
+            echo "kernel/17 base: $CURRENT_BASE -> $UPSTREAM_SHA"
+            echo "KernelSU-Next: $KSUN_CURRENT -> $KSUN_LATEST"
+            echo "has_updates=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Force sync to origin/17
+        if: steps.check.outputs.has_updates == 'true'
+        working-directory: kernel
+        run: git reset --hard origin/17
+
+      - name: Apply KernelSU + SuSFS config patch
+        if: steps.check.outputs.has_updates == 'true'
+        working-directory: kernel
+        run: |
+          git apply $GITHUB_WORKSPACE/patches/kernelsu-susfs-config.patch
+          git add .
+          git commit -s -m "configs: Enable KernelSU and SuSFS configuration"
+
+      - name: Setup KernelSU-Next
+        if: steps.check.outputs.has_updates == 'true'
+        working-directory: kernel
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          git submodule add https://github.com/pershoot/KernelSU-Next KernelSU-Next
+          git add .
+          git commit -s -m "treewide: Import KernelSU-Next from dev-susfs branch"
+
+      - name: Apply SuSFS patch
+        if: steps.check.outputs.has_updates == 'true'
+        working-directory: kernel
+        run: |
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10
+          cp susfs4ksu/kernel_patches/fs/* fs/
+          cp susfs4ksu/kernel_patches/include/linux/* include/linux/
+          patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || { echo "SuSFS patch failed"; exit 1; }
+          rm -rf susfs4ksu
+          git add .
+          SUSFS_VER=$(grep -oP '(?<=#define SUSFS_VERSION ")[^"]+' include/linux/susfs.h)
+          git commit -s -m "drivers: Implement SusFS ${SUSFS_VER}"
+
+      - name: Force push to ksun-susfs
+        if: steps.check.outputs.has_updates == 'true'
+        working-directory: kernel
+        run: git push origin HEAD:ksun-susfs --force
