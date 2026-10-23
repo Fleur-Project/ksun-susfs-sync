@@ -18,7 +18,7 @@ jobs:
         with:
           repository: Fleur-Project/android_kernel_xiaomi_sm7435
           ref: '17'
-          fetch-depth: 0
+          fetch-depth: 1
           token: ${{ secrets.KERNEL_TOKEN }}
           path: kernel
 
@@ -32,11 +32,10 @@ jobs:
         id: check
         working-directory: kernel
         run: |
-          git fetch origin 17
-          git fetch origin ksun-susfs 2>/dev/null || true
+          git fetch --depth=10 origin ksun-susfs 2>/dev/null || true
 
-          UPSTREAM_SHA=$(git rev-parse origin/17)
-          CURRENT_BASE=$(git merge-base origin/ksun-susfs origin/17 2>/dev/null || echo "none")
+          UPSTREAM_SHA=$(git rev-parse HEAD)
+          CURRENT_BASE=$(git merge-base origin/ksun-susfs HEAD 2>/dev/null || echo "none")
 
           KSUN_LATEST=$(git ls-remote https://github.com/pershoot/KernelSU-Next refs/heads/dev-susfs | awk '{print $1}')
           KSUN_CURRENT=$(git ls-tree origin/ksun-susfs KernelSU-Next 2>/dev/null | awk '{print $3}' || echo "none")
