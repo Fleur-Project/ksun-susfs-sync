@@ -39,8 +39,7 @@ jobs:
           CURRENT_BASE=$(git merge-base origin/ksun-susfs origin/17 2>/dev/null || echo "none")
 
           KSUN_LATEST=$(git ls-remote https://github.com/pershoot/KernelSU-Next refs/heads/dev-susfs | awk '{print $1}')
-          KSUN_CURRENT=$(git log origin/ksun-susfs --grep="Tracking upstream:" -1 --format="%b" 2>/dev/null | grep -oP '(?<=commit/)[a-f0-9]+' || echo "none")
-          KSUN_CURRENT=${KSUN_CURRENT:-none}
+          KSUN_CURRENT=$(git ls-tree origin/ksun-susfs KernelSU-Next 2>/dev/null | awk '{print $3}' || echo "none")
 
           if [ "$UPSTREAM_SHA" = "$CURRENT_BASE" ] && [ "$KSUN_LATEST" = "$KSUN_CURRENT" ]; then
             echo "No upstream updates detected, skipping."
@@ -68,15 +67,10 @@ jobs:
         if: steps.check.outputs.has_updates == 'true'
         working-directory: kernel
         run: |
-          git clone --depth=1 https://github.com/pershoot/KernelSU-Next.git -b dev-susfs
-          KSUN_COMMIT=$(git -C KernelSU-Next rev-parse HEAD)
-          rm -rf drivers/kernelsu
-          cp -r KernelSU-Next/kernel drivers/kernelsu
-          grep -q "kernelsu" drivers/Makefile || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> drivers/Makefile
-          grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig || sed -i '/endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          rm -rf KernelSU-Next
-          git add drivers/Makefile drivers/Kconfig drivers/kernelsu
-          git commit -s -m "treewide: Import KernelSU-Next dev-susfs" -m "Tracking upstream: https://github.com/pershoot/KernelSU-Next/commit/${KSUN_COMMIT}"
+          curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          git submodule add https://github.com/pershoot/KernelSU-Next KernelSU-Next
+          git add .
+          git commit -s -m "treewide: Import KernelSU-Next from dev-susfs branch"
 
       - name: Apply SuSFS patch
         if: steps.check.outputs.has_updates == 'true'
